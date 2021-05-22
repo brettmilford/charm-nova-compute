@@ -23,6 +23,7 @@ import os
 import subprocess
 import grp
 import shutil
+import yaml
 
 import charmhelpers.core.unitdata as unitdata
 
@@ -33,6 +34,7 @@ from charmhelpers.core.hookenv import (
     local_unit,
     log,
     DEBUG,
+    ERROR,
     relation_ids,
     remote_service_name,
     related_units,
@@ -140,6 +142,9 @@ from nova_compute_context import (
 from charmhelpers.contrib.charmsupport import nrpe
 from charmhelpers.core.sysctl import create as create_sysctl
 from charmhelpers.contrib.hardening.harden import harden
+from charmhelpers.contrib.sysctl.watermark_scale_factor import (
+    calculate_watermark_scale_factor,
+)
 
 from socket import gethostname
 
@@ -203,9 +208,22 @@ def config_changed():
             send_remote_restart = True
 
     sysctl_settings = config('sysctl')
-    if sysctl_settings and not is_container():
+    try:
+        sysctl_dict_parsed = yaml.safe_load(sysctl_settings)
+    except yaml.YAMLError:
+        log("Error parsing YAML sysctl_dict: {}".format(sysctl_settings),
+            level=ERROR)
+
+    if "vm.watermark_scale_factor" not in sysctl_dict_parsed:
+        try:
+            wmark = calculate_watermark_scale_factor()
+            sysctl_dict_parsed["vm.watermark_scale_factor"] = wmark
+        except Exception:
+            pass
+
+    if sysctl_dict_parsed and not is_container():
         create_sysctl(
-            sysctl_settings,
+            sysctl_dict_parsed,
             '/etc/sysctl.d/50-nova-compute.conf',
             # Some keys in the config may not exist in /proc/sys/net/.
             # For example, the conntrack module may not be loaded when
